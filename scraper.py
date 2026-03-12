@@ -1,7 +1,9 @@
-from playwright.sync_api import sync_playwright
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 import pandas as pd
-import os
 import time
+import os
 
 cities = [
     "New York, NY",
@@ -10,111 +12,70 @@ cities = [
 ]
 
 doctors = []
-seen_profiles = set()
+seen = set()
 
+options = Options()
+options.add_argument("--start-maximized")
+options.add_argument("--disable-blink-features=AutomationControlled")
 
-def clean_text(val):
-    if val:
-        return val.strip()
-    return None
+driver = webdriver.Chrome(options=options)
 
-
-def scrape_city(page, city):
+for city in cities:
 
     offset = 0
 
     while True:
 
-        url = f"https://www.zocdoc.com/search?address={city.replace(' ', '+')}&offset={offset}"
+        url = f"https://www.zocdoc.com/search?address={city.replace(' ','+')}&offset={offset}"
 
-        print(f"\nScraping {city} | offset={offset}")
+        print("Opening:", url)
 
-        page.goto(url)
-        page.wait_for_load_state("networkidle")
+        driver.get(url)
 
-        cards = page.query_selector_all("article")
+        time.sleep(8)
 
-        print("Doctor cards found:", len(cards))
+        cards = driver.find_elements(By.TAG_NAME, "article")
+
+        print("Cards:", len(cards))
 
         if len(cards) == 0:
             break
 
-        for card in cards:
+        for c in cards:
 
             try:
 
-                name_el = card.query_selector("h2")
-                name = clean_text(name_el.inner_text()) if name_el else None
+                name = c.find_element(By.TAG_NAME,"h2").text
+                profile = c.find_element(By.CSS_SELECTOR,"a[href*='/doctor/']").get_attribute("href")
 
-                profile_el = card.query_selector("a")
-                profile_url = profile_el.get_attribute("href") if profile_el else None
-
-                if profile_url and profile_url.startswith("/"):
-                    profile_url = "https://www.zocdoc.com" + profile_url
-
-                if not profile_url or profile_url in seen_profiles:
+                if profile in seen:
                     continue
 
-                seen_profiles.add(profile_url)
+                seen.add(profile)
 
-                img_el = card.query_selector("img")
-                img_url = img_el.get_attribute("src") if img_el else None
-
-                specialty = None
-                specialty_el = card.query_selector("div:has-text('Doctor')")
-                if specialty_el:
-                    specialty = clean_text(specialty_el.inner_text())
-
-                rating = None
-                rating_el = card.query_selector("span[aria-label*='stars']")
-                if rating_el:
-                    rating = clean_text(rating_el.inner_text())
-
-                review_count = None
-                review_el = card.query_selector("span:has-text('reviews')")
-                if review_el:
-                    review_count = clean_text(review_el.inner_text())
+                img = c.find_element(By.TAG_NAME,"img").get_attribute("src")
 
                 doctors.append({
-                    "pic_url": img_url,
+                    "pic_url": img,
                     "Name": name,
-                    "Profile URL": profile_url,
-                    "Specialty": specialty,
-                    "Rating": rating,
-                    "Review Count": review_count
+                    "Profile URL": profile,
+                    "Specialty": None,
+                    "Rating": None,
+                    "Review Count": None
                 })
 
-            except Exception as e:
-                continue
+            except:
+                pass
 
         offset += 10
 
-        time.sleep(2)
+        time.sleep(3)
 
+driver.quit()
 
-def main():
+os.makedirs("output", exist_ok=True)
 
-    with sync_playwright() as p:
+df = pd.DataFrame(doctors)
+df.to_csv("output/zocdoc_doctors.csv", index=False)
 
-        browser = p.chromium.launch(headless=False)
-
-        page = browser.new_page()
-
-        for city in cities:
-            scrape_city(page, city)
-
-        browser.close()
-
-    df = pd.DataFrame(doctors)
-
-    os.makedirs("output", exist_ok=True)
-
-    df.to_csv("output/zocdoc_doctors.csv", index=False)
-
-    print("\nScraping finished!")
-    print("Total doctors collected:", len(df))
-    print("CSV saved to: output/zocdoc_doctors.csv")
-
-
-if __name__ == "__main__":
-    main()
+print("Total doctors:", len(df))
